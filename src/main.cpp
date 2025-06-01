@@ -28,8 +28,16 @@ WebServer server(80);
 #define SERVO_PIN 14
 #define DHT_PIN 26
 #define FLAME_PIN 25
+#define TOUCH_THRESHOLD 40 // Lower = more sensitive
+
+unsigned long lastTouchCheck = 0;
+const unsigned long touchInterval = 200; // ms debounce
+
 
 // RFID Pins
+#define SPI_MOSI 27
+#define SPI_MISO 19
+#define SPI_SCK 5
 #define RST_PIN 16
 #define SS_PIN 17
 
@@ -49,9 +57,11 @@ MFRC522 mfrc522(SS_PIN, RST_PIN);
 // Servo
 Servo doorLock;
 
+// static unsigned long lastTouchTime = 0;
+
 // Variables
-bool lightState = false;
-bool fanState = false;
+bool lightState = false; 
+bool fanState = false; 
 bool doorLocked = true;
 bool motionDetected = false;
 bool flameDetected = false;
@@ -60,10 +70,9 @@ float humidity = 0;
 
 // Authorized RFID Cards
 byte authorizedCards[][4] = {
-    {0x12, 0x34, 0x56, 0x78},
-    {0x9A, 0xBC, 0xDE, 0xF0}};
-
-
+    {0x5A, 0xB8, 0x01, 0x01}, // Your new card
+    {0x9C, 0x89, 0x25, 0x03}  // Your previous card (keep if still needed)
+};
 
 // Web Server Handlers
 void handleRoot();
@@ -104,6 +113,9 @@ void setup()
   pinMode(TOUCH_PIN_2, INPUT);
   pinMode(FLAME_PIN, INPUT);
 
+  digitalWrite(LIGHT_RELAY_PIN, HIGH);
+  digitalWrite(FAN_RELAY_PIN, HIGH);
+
   // Initialize OLED
   if (!display.begin(SSD1306_SWITCHCAPVCC, 0x3C))
   {
@@ -116,7 +128,8 @@ void setup()
   display.clearDisplay();
 
   // Initialize RFID
-  SPI.begin();
+  SPI.begin(SPI_SCK, SPI_MISO, SPI_MOSI, SS_PIN);
+
   mfrc522.PCD_Init();
 
   // Initialize DHT
@@ -181,57 +194,367 @@ void loop()
   delay(100);
 }
 
-// Web Server Handlers
 void handleRoot()
 {
-  String html = "<!DOCTYPE html><html><head>";
-  html += "<title>Home Automation</title>";
-  html += "<meta name='viewport' content='width=device-width, initial-scale=1'>";
-  html += "<style>";
-  html += "body{font-family:Arial,sans-serif;margin:20px;background-color:#f5f5f5;}";
-  html += ".container{max-width:600px;margin:0 auto;background:white;padding:20px;border-radius:10px;box-shadow:0 0 10px rgba(0,0,0,0.1);}";
-  html += "h1{color:#444;text-align:center;}";
-  html += ".control{display:flex;justify-content:space-between;margin:15px 0;}";
-  html += "button{padding:10px 20px;border:none;border-radius:5px;cursor:pointer;font-size:16px;font-weight:bold;}";
-  html += ".on{background-color:#4CAF50;color:white;}";
-  html += ".off{background-color:#f44336;color:white;}";
-  html += ".status{margin-top:20px;padding:15px;background-color:#e9e9e9;border-radius:5px;}";
-  html += "</style>";
-  html += "</head><body>";
-  html += "<div class='container'>";
-  html += "<h1>Home Automation System</h1>";
+  String html = R"=====(
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Smart Home Dashboard</title>
+  <style>
+    :root {
+      --primary: #4361ee;
+      --secondary: #3f37c9;
+      --accent: #4895ef;
+      --danger: #f72585;
+      --success: #4cc9f0;
+      --dark: #212529;
+      --light: #f8f9fa;
+    }
+    
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+      font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+    }
+    
+    body {
+      background-color: #f5f7fa;
+      color: var(--dark);
+      line-height: 1.6;
+    }
+    
+    .container {
+      max-width: 1200px;
+      margin: 0 auto;
+      padding: 2rem;
+    }
+    
+    header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 2rem;
+      padding-bottom: 1rem;
+      border-bottom: 1px solid #e1e5ee;
+    }
+    
+    h1 {
+      color: var(--primary);
+      font-size: 2rem;
+    }
+    
+    .status-badge {
+      background-color: var(--light);
+      padding: 0.5rem 1rem;
+      border-radius: 50px;
+      font-weight: 600;
+      box-shadow: 0 2px 5px rgba(0,0,0,0.1);
+    }
+    
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+      gap: 2rem;
+    }
+    
+    .card {
+      background: white;
+      border-radius: 12px;
+      padding: 1.5rem;
+      box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+      transition: transform 0.3s ease, box-shadow 0.3s ease;
+    }
+    
+    .card:hover {
+      transform: translateY(-5px);
+      box-shadow: 0 10px 20px rgba(0,0,0,0.1);
+    }
+    
+    .card-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 1rem;
+    }
+    
+    .card-title {
+      font-size: 1.2rem;
+      font-weight: 600;
+      color: var(--dark);
+    }
+    
+    .card-icon {
+      width: 40px;
+      height: 40px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      background-color: rgba(67, 97, 238, 0.1);
+      border-radius: 50%;
+      color: var(--primary);
+    }
+    
+    .card-body {
+      margin-bottom: 1.5rem;
+    }
+    
+    .toggle-switch {
+      position: relative;
+      display: inline-block;
+      width: 60px;
+      height: 34px;
+    }
+    
+    .toggle-switch input {
+      opacity: 0;
+      width: 0;
+      height: 0;
+    }
+    
+    .slider {
+      position: absolute;
+      cursor: pointer;
+      top: 0;
+      left: 0;
+      right: 0;
+      bottom: 0;
+      background-color: #ccc;
+      transition: .4s;
+      border-radius: 34px;
+    }
+    
+    .slider:before {
+      position: absolute;
+      content: "";
+      height: 26px;
+      width: 26px;
+      left: 4px;
+      bottom: 4px;
+      background-color: white;
+      transition: .4s;
+      border-radius: 50%;
+    }
+    
+    input:checked + .slider {
+      background-color: var(--primary);
+    }
+    
+    input:checked + .slider:before {
+      transform: translateX(26px);
+    }
+    
+    .btn {
+      display: inline-block;
+      padding: 0.8rem 1.5rem;
+      border-radius: 8px;
+      font-weight: 600;
+      text-decoration: none;
+      text-align: center;
+      cursor: pointer;
+      transition: all 0.3s ease;
+      border: none;
+    }
+    
+    .btn-primary {
+      background-color: var(--primary);
+      color: white;
+    }
+    
+    .btn-primary:hover {
+      background-color: var(--secondary);
+    }
+    
+    .sensor-value {
+      font-size: 2.5rem;
+      font-weight: 700;
+      color: var(--primary);
+      margin: 1rem 0;
+    }
+    
+    .sensor-unit {
+      font-size: 1rem;
+      color: #6c757d;
+    }
+    
+    .alert {
+      padding: 1rem;
+      border-radius: 8px;
+      margin-bottom: 1rem;
+      font-weight: 600;
+    }
+    
+    .alert-danger {
+      background-color: rgba(247, 37, 133, 0.1);
+      color: var(--danger);
+      border-left: 4px solid var(--danger);
+    }
+    
+    .alert-success {
+      background-color: rgba(76, 201, 240, 0.1);
+      color: var(--success);
+      border-left: 4px solid var(--success);
+    }
+    
+    @media (max-width: 768px) {
+      .grid {
+        grid-template-columns: 1fr;
+      }
+      
+      header {
+        flex-direction: column;
+        align-items: flex-start;
+        gap: 1rem;
+      }
+    }
+    
+    /* Animation for alerts */
+    @keyframes pulse {
+      0% { transform: scale(1); }
+      50% { transform: scale(1.02); }
+      100% { transform: scale(1); }
+    }
+    
+    .pulse {
+      animation: pulse 2s infinite;
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <header>
+      <h1>Smart Home Dashboard</h1>
+      <div class="status-badge">
+        <span id="connection-status">Connected</span>
+      </div>
+    </header>
+    
+    <div class="grid" id="dashboard-grid">
+      <!-- Content will be updated via AJAX -->
+    </div>
+  </div>
 
-  // Light Control
-  html += "<div class='control'>";
-  html += "<span>Light: " + String(lightState ? "ON" : "OFF") + "</span>";
-  html += "<a href='/light'><button class='" + String(lightState ? "on" : "off") + "'>";
-  html += lightState ? "TURN OFF" : "TURN ON";
-  html += "</button></a></div>";
+  <script>
+    // Initial load
+    document.addEventListener('DOMContentLoaded', function() {
+      updateDashboard();
+      setInterval(updateDashboard, 1000); // Update every second
+    });
 
-  // Fan Control
-  html += "<div class='control'>";
-  html += "<span>Fan: " + String(fanState ? "ON" : "OFF") + "</span>";
-  html += "<a href='/fan'><button class='" + String(fanState ? "on" : "off") + "'>";
-  html += fanState ? "TURN OFF" : "TURN ON";
-  html += "</button></a></div>";
+    // Update dashboard with fresh data
+    function updateDashboard() {
+      fetch('/status')
+        .then(response => response.json())
+        .then(data => {
+          const grid = document.getElementById('dashboard-grid');
+          
+          // Generate HTML based on current state
+          let html = `
+            <!-- Light Control Card -->
+            <div class="card">
+              <div class="card-header">
+                <h2 class="card-title">Light Control</h2>
+                <div class="card-icon">💡</div>
+              </div>
+              <div class="card-body">
+                <p>Current status: <strong>${data.light ? 'ON' : 'OFF'}</strong></p>
+              </div>
+              <button onclick="controlDevice('light')" class="btn btn-primary">
+                ${data.light ? 'TURN OFF' : 'TURN ON'}
+              </button>
+            </div>
+            
+            <!-- Fan Control Card -->
+            <div class="card">
+              <div class="card-header">
+                <h2 class="card-title">Fan Control</h2>
+                <div class="card-icon">🌀</div>
+              </div>
+              <div class="card-body">
+                <p>Current status: <strong>${data.fan ? 'ON' : 'OFF'}</strong></p>
+                <p>Auto mode: <strong>${(data.temperature > 28 || data.temperature <= 26) ? 'ACTIVE' : 'INACTIVE'}</strong></p>
+              </div>
+              <button onclick="controlDevice('fan')" class="btn btn-primary">
+                ${data.fan ? 'TURN OFF' : 'TURN ON'}
+              </button>
+            </div>
+            
+            <!-- Door Lock Card -->
+            <div class="card">
+              <div class="card-header">
+                <h2 class="card-title">Door Lock</h2>
+                <div class="card-icon">🚪</div>
+              </div>
+              <div class="card-body">
+                <p>Current status: <strong>${data.doorLocked ? 'LOCKED' : 'UNLOCKED'}</strong></p>
+              </div>
+              <button onclick="controlDevice('door')" class="btn btn-primary">
+                ${data.doorLocked ? 'UNLOCK' : 'LOCK'}
+              </button>
+            </div>
+            
+            <!-- Temperature Card -->
+            <div class="card">
+              <div class="card-header">
+                <h2 class="card-title">Temperature</h2>
+                <div class="card-icon">🌡️</div>
+              </div>
+              <div class="card-body">
+                <div class="sensor-value">${data.temperature.toFixed(1)} <span class="sensor-unit">°C</span></div>
+              </div>
+            </div>
+            
+            <!-- Humidity Card -->
+            <div class="card">
+              <div class="card-header">
+                <h2 class="card-title">Humidity</h2>
+                <div class="card-icon">💧</div>
+              </div>
+              <div class="card-body">
+                <div class="sensor-value">${data.humidity.toFixed(1)} <span class="sensor-unit">%</span></div>
+              </div>
+            </div>
+            
+            <!-- System Status Card -->
+            <div class="card">
+              <div class="card-header">
+                <h2 class="card-title">System Status</h2>
+                <div class="card-icon">📊</div>
+              </div>
+              <div class="card-body">
+                <p>Motion: <strong>${data.motion ? 'DETECTED' : 'NO MOTION'}</strong></p>
+                <p>Flame: <strong>${data.flame ? 'DETECTED! ALERT!' : 'NO FLAME'}</strong></p>
+                ${data.motion ? `
+                <div class="alert alert-success">
+                  Motion detected in the room
+                </div>
+                ` : ''}
+                ${data.flame ? `
+                <div class="alert alert-danger pulse">
+                  ⚠️ FIRE DETECTED! EMERGENCY!
+                </div>
+                ` : ''}
+              </div>
+            </div>
+          `;
+          
+          grid.innerHTML = html;
+        })
+        .catch(error => console.error('Error fetching data:', error));
+    }
 
-  // Door Control
-  html += "<div class='control'>";
-  html += "<span>Door: " + String(doorLocked ? "LOCKED" : "UNLOCKED") + "</span>";
-  html += "<a href='/door'><button class='" + String(doorLocked ? "off" : "on") + "'>";
-  html += doorLocked ? "UNLOCK" : "LOCK";
-  html += "</button></a></div>";
-
-  // Status Information
-  html += "<div class='status'>";
-  html += "<h3>Current Status</h3>";
-  html += "<p>Temperature: " + String(temperature) + " °C</p>";
-  html += "<p>Humidity: " + String(humidity) + " %</p>";
-  html += "<p>Motion: " + String(motionDetected ? "DETECTED" : "NO MOTION") + "</p>";
-  html += "<p>Flame: " + String(flameDetected ? "DETECTED! ALERT!" : "NO FLAME") + "</p>";
-  html += "</div>";
-
-  html += "</div></body></html>";
+    // Control devices
+    function controlDevice(device) {
+      fetch('/' + device)
+        .then(() => updateDashboard());
+    }
+  </script>
+</body>
+</html>
+)=====";
 
   server.send(200, "text/html", html);
 }
@@ -266,18 +589,28 @@ void handleDoor()
 
 void handleStatus()
 {
+  // Ensure we have valid temperature and humidity readings
+  float temp = temperature;
+  float hum = humidity;
+
+  if (isnan(temp))
+    temp = 0.0;
+  if (isnan(hum))
+    hum = 0.0;
+
   String json = "{";
   json += "\"light\":" + String(lightState ? "true" : "false") + ",";
   json += "\"fan\":" + String(fanState ? "true" : "false") + ",";
   json += "\"doorLocked\":" + String(doorLocked ? "true" : "false") + ",";
-  json += "\"temperature\":" + String(temperature) + ",";
-  json += "\"humidity\":" + String(humidity) + ",";
+  json += "\"temperature\":" + String(temp) + ",";
+  json += "\"humidity\":" + String(hum) + ",";
   json += "\"motion\":" + String(motionDetected ? "true" : "false") + ",";
   json += "\"flame\":" + String(flameDetected ? "true" : "false");
   json += "}";
 
   server.send(200, "application/json", json);
 }
+
 
 void handleNotFound()
 {
@@ -298,27 +631,28 @@ void handleNotFound()
   server.send(404, "text/plain", message);
 }
 
-// Existing sensor and control functions (from previous implementation)
+
+
 void readDHT()
 {
-  temperature = dht.readTemperature();
-  humidity = dht.readHumidity();
+  float newTemp = dht.readTemperature();
+  float newHum = dht.readHumidity();
 
-  if (isnan(temperature) || isnan(humidity))
-  {
-    Serial.println("Failed to read from DHT sensor!");
-    return;
-  }
+  // Only update values if they're valid
+  if (!isnan(newTemp))
+    temperature = newTemp;
+  if (!isnan(newHum))
+    humidity = newHum;
 
-  // Auto control fan based on temperature
-  if (temperature > 28 && !fanState)
-  {
-    toggleFan();
-  }
-  else if (temperature <= 26 && fanState)
-  {
-    toggleFan();
-  }
+  // // Auto control fan based on temperature
+  // if (temperature > 28 && !fanState)
+  // {
+  //   toggleFan();
+  // }
+  // else if (temperature <= 26 && fanState)
+  // {
+  //   toggleFan();
+  // }
 }
 
 void checkPIR()
@@ -348,18 +682,10 @@ void checkFlame()
 
   if (flameDetected)
   {
-    if (lightState)
-      toggleLight();
-    if (fanState)
-      toggleFan();
-
-    for (int i = 0; i < 5; i++)
-    {
-      digitalWrite(RED_LED_PIN, HIGH);
-      delay(100);
-      digitalWrite(RED_LED_PIN, LOW);
-      delay(100);
-    }
+    digitalWrite(LIGHT_RELAY_PIN, HIGH); // Turn OFF light
+    digitalWrite(FAN_RELAY_PIN, HIGH);   // Turn OFF fan
+    lightState = false;
+    fanState = false;
 
     displayAlert("FIRE DETECTED!");
   }
@@ -367,21 +693,20 @@ void checkFlame()
 
 void checkTouch()
 {
-  static unsigned long lastTouchTime = 0;
-
-  if (millis() - lastTouchTime > 500)
+  if (millis() - lastTouchCheck > touchInterval)
   {
-    if (touchRead(TOUCH_PIN_1) < 20)
+    if (touchRead(TOUCH_PIN_1) < TOUCH_THRESHOLD)
     {
       toggleLight();
-      lastTouchTime = millis();
+      delay(300); // avoid bouncing
     }
 
-    if (touchRead(TOUCH_PIN_2) < 20)
+    if (touchRead(TOUCH_PIN_2) < TOUCH_THRESHOLD)
     {
       toggleFan();
-      lastTouchTime = millis();
+      delay(300); // avoid bouncing
     }
+    lastTouchCheck = millis();
   }
 }
 
@@ -425,13 +750,13 @@ void checkRFID()
 void toggleLight()
 {
   lightState = !lightState;
-  digitalWrite(LIGHT_RELAY_PIN, lightState ? HIGH : LOW);
+  digitalWrite(LIGHT_RELAY_PIN, lightState ? LOW : HIGH); // Active low logic
 }
 
 void toggleFan()
 {
   fanState = !fanState;
-  digitalWrite(FAN_RELAY_PIN, fanState ? HIGH : LOW);
+  digitalWrite(FAN_RELAY_PIN, fanState ? LOW : HIGH); // Active low logic
 }
 
 void lockDoor()
@@ -489,7 +814,7 @@ void updateDisplay()
 void displayAlert(const char *message)
 {
   display.clearDisplay();
-  display.setTextSize(2);
+  display.setTextSize(1);
   display.setCursor(0, 20);
   display.println(message);
   display.display();
