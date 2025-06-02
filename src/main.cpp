@@ -11,6 +11,18 @@
 #include <Update.h>
 #include <updatePage.h>
 
+// Sinric Pro Configuration
+#define APP_KEY "dd3cc009-0749-47a4-8781-952ef643d556" // Should look like "de0bxxxx-1x3x-4x3x-ax2x-5dabxxxxxxxx"
+#define APP_SECRET "cde80a70-26a9-417c-a95f-33f954fd9d9f-26382710-211d-40f0-9ace-e50cfe171288" // Should look like "5f36xxxx-x3x7-4x3x-xexe-e86724a9xxxx-4c4axxxx-3x3x-x5xe-x9x3-333d65xxxxxx"
+#define LIGHT_ID "683cadf6929fca430248a80e"                                                    // Should look like "5dc1564130xxxxxxxxxxxxxx"
+#define FAN_ID "683cae45f64d827f967f1f2e"                                                      // Should look like "5dc1564130xxxxxxxxxxxxxx"
+#define DOOR_ID "683cae706868ee0e887cfe2f"       // Should look like "5dc1564130xxxxxxxxxxxxxx"
+
+#include <SinricPro.h>
+#include <SinricProSwitch.h>
+#include <SinricProLight.h>
+#include <SinricProDoorbell.h>
+
 // WiFi Credentials
 const char *ssid = "OPTIMUS";
 const char *password = "qqwweeaaaa";
@@ -19,8 +31,8 @@ const char *password = "qqwweeaaaa";
 WebServer server(80);
 
 // Pin Definitions
-#define LIGHT_RELAY_PIN 23
-#define FAN_RELAY_PIN 18
+#define LIGHT_RELAY_PIN 18
+#define FAN_RELAY_PIN 23
 #define PIR_PIN 13
 #define RED_LED_PIN 12
 #define TOUCH_PIN_1 4
@@ -32,7 +44,6 @@ WebServer server(80);
 
 unsigned long lastTouchCheck = 0;
 const unsigned long touchInterval = 200; // ms debounce
-
 
 // RFID Pins
 #define SPI_MOSI 27
@@ -60,8 +71,8 @@ Servo doorLock;
 // static unsigned long lastTouchTime = 0;
 
 // Variables
-bool lightState = false; 
-bool fanState = false; 
+bool lightState = false;
+bool fanState = false;
 bool doorLocked = true;
 bool motionDetected = false;
 bool flameDetected = false;
@@ -96,6 +107,10 @@ void updateDisplay();
 void displayAlert(const char *message);
 void handleUpload();
 void handleUpdate();
+bool onDoorState(const String &deviceId, bool &state);
+bool onFanState(const String &deviceId, bool &state);
+bool onLightState(const String &deviceId, bool &state);
+void syncStatesWithSinricPro();
 
 // WiFi Setup
 void setupWiFi();
@@ -151,6 +166,23 @@ void setup()
     display.display();
   }
 
+  // Sinric Pro setup
+  SinricProSwitch &myLight = SinricPro[LIGHT_ID];
+  myLight.onPowerState(onLightState);
+
+  SinricProSwitch &myFan = SinricPro[FAN_ID];
+  myFan.onPowerState(onFanState);
+
+  SinricProDoorbell &myDoor = SinricPro[DOOR_ID];
+  myDoor.onPowerState(onDoorState);
+
+  SinricPro.onConnected([]()
+                        { Serial.println("Connected to SinricPro"); });
+  SinricPro.onDisconnected([]()
+                           { Serial.println("Disconnected from SinricPro"); });
+
+  SinricPro.begin(APP_KEY, APP_SECRET);
+
   display.clearDisplay();
   display.print("WiFi connected");
   display.print("IP: ");
@@ -180,6 +212,7 @@ void setup()
 void loop()
 {
   server.handleClient();
+  SinricPro.handle();
 
   // Read sensors
   readDHT();
@@ -611,7 +644,6 @@ void handleStatus()
   server.send(200, "application/json", json);
 }
 
-
 void handleNotFound()
 {
   String message = "File Not Found\n\n";
@@ -630,8 +662,6 @@ void handleNotFound()
 
   server.send(404, "text/plain", message);
 }
-
-
 
 void readDHT()
 {
@@ -664,11 +694,6 @@ void checkPIR()
     digitalWrite(RED_LED_PIN, HIGH);
     delay(100);
     digitalWrite(RED_LED_PIN, LOW);
-
-    if (!lightState)
-    {
-      toggleLight();
-    }
   }
   else
   {
@@ -678,7 +703,7 @@ void checkPIR()
 
 void checkFlame()
 {
-  flameDetected = digitalRead(FLAME_PIN);
+  flameDetected = !digitalRead(FLAME_PIN); //Ative Low
 
   if (flameDetected)
   {
@@ -750,27 +775,30 @@ void checkRFID()
 void toggleLight()
 {
   lightState = !lightState;
-  digitalWrite(LIGHT_RELAY_PIN, lightState ? LOW : HIGH); // Active low logic
+  digitalWrite(LIGHT_RELAY_PIN, lightState ? LOW : HIGH);
+  syncStatesWithSinricPro();
 }
 
 void toggleFan()
 {
   fanState = !fanState;
-  digitalWrite(FAN_RELAY_PIN, fanState ? LOW : HIGH); // Active low logic
+  digitalWrite(FAN_RELAY_PIN, fanState ? LOW : HIGH);
+  syncStatesWithSinricPro();
 }
 
 void lockDoor()
 {
-  doorLock.write(0);
+  doorLock.write(90);
   doorLocked = true;
+  syncStatesWithSinricPro();
 }
 
 void unlockDoor()
 {
-  doorLock.write(90);
+  doorLock.write(0);
   doorLocked = false;
+  syncStatesWithSinricPro();
 }
-
 void updateDisplay()
 {
   display.clearDisplay();
@@ -859,4 +887,51 @@ void handleUpload()
       Update.printError(Serial);
     }
   }
+}
+
+// Sinric Pro callbacks
+bool onLightState(const String &deviceId, bool &state)
+{
+  if (lightState != state)
+  {
+    toggleLight();
+  }
+  return true;
+}
+
+bool onFanState(const String &deviceId, bool &state)
+{
+  if (fanState != state)
+  {
+    toggleFan();
+  }
+  return true;
+}
+
+bool onDoorState(const String &deviceId, bool &state)
+{
+  if (doorLocked == state)
+  { // state=true means lock, false means unlock
+    if (doorLocked)
+    {
+      unlockDoor();
+    }
+    else
+    {
+      lockDoor();
+    }
+  }
+  return true;
+}
+
+void syncStatesWithSinricPro()
+{
+  SinricProSwitch &myLight = SinricPro[LIGHT_ID];
+  myLight.sendPowerStateEvent(lightState);
+
+  SinricProSwitch &myFan = SinricPro[FAN_ID];
+  myFan.sendPowerStateEvent(fanState);
+
+  SinricProDoorbell &myDoor = SinricPro[DOOR_ID];
+  myDoor.sendPowerStateEvent(doorLocked);
 }
