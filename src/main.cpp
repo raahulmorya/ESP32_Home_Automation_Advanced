@@ -12,11 +12,11 @@
 #include <updatePage.h>
 
 // Sinric Pro Configuration
-#define APP_KEY "dd3cc009-0749-47a4-8781-952ef643d556" // Should look like "de0bxxxx-1x3x-4x3x-ax2x-5dabxxxxxxxx"
-#define APP_SECRET "cde80a70-26a9-417c-a95f-33f954fd9d9f-26382710-211d-40f0-9ace-e50cfe171288" // Should look like "5f36xxxx-x3x7-4x3x-xexe-e86724a9xxxx-4c4axxxx-3x3x-x5xe-x9x3-333d65xxxxxx"
-#define LIGHT_ID "683cadf6929fca430248a80e"                                                    // Should look like "5dc1564130xxxxxxxxxxxxxx"
-#define FAN_ID "683cae45f64d827f967f1f2e"                                                      // Should look like "5dc1564130xxxxxxxxxxxxxx"
-#define DOOR_ID "683cae706868ee0e887cfe2f"       // Should look like "5dc1564130xxxxxxxxxxxxxx"
+#define APP_KEY "dd3cc009-0749-47a4-8781-xxxxxxx" // Should look like "de0bxxxx-1x3x-4x3x-ax2x-5dabxxxxxxxx"
+#define APP_SECRET "cde80a70-26a9-417c-a95f-xxxxxxxxxx" // Should look like "5f36xxxx-x3x7-4x3x-xexe-e86724a9xxxx-4c4axxxx-3x3x-x5xe-x9x3-333d65xxxxxx"
+#define LIGHT_ID "683cadf6929fcxxxxxxxx"                                                    // Should look like "5dc1564130xxxxxxxxxxxxxx"
+#define FAN_ID "683caxxxxxxxxxxx"                                                      // Should look like "5dc1564130xxxxxxxxxxxxxx"
+#define DOOR_ID "683cae706868exxxxxxxxxf"       // Should look like "5dc1564130xxxxxxxxxxxxxx"
 
 #include <SinricPro.h>
 #include <SinricProSwitch.h>
